@@ -1,7 +1,5 @@
 node_modules/
 uploads/
-.tmp/
-tmp/
 .env
 recordings.db
 {
@@ -16,28 +14,16 @@ recordings.db
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
-    "cloudinary": "^1.41.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "morgan": "^1.10.0",
-    "multer": "^1.4.5-lts.1",
-    "pg": "^8.11.3"
+    "multer": "^1.4.5-lts.1"
   }
 }
 PORT=3000
 ADMIN_PASSWORD=admin123
-
-# Если пусто — будет SQLite (recordings.db).
-# Если задашь — будет Postgres:
-DATABASE_URL=
-
-# Хранилище аудио.
-# Если пусто — локальная папка /uploads (годится локально).
-# Для продакшна на Render лучше Cloudinary (бесплатный тариф):
-# Формат: cloudinary://API_KEY:API_SECRET@CLOUD_NAME
-CLOUDINARY_URL=
 services:
   - type: web
     name: online-recording
@@ -51,10 +37,6 @@ services:
         value: 18
       - key: ADMIN_PASSWORD
         sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: CLOUDINARY_URL
-        sync: false
     routes:
       - type: rewrite
         source: /admin
@@ -67,8 +49,8 @@ import path from 'path';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs';
-
 import { fileURLToPath } from 'url';
+
 import { createDb } from './db.js';
 import { saveFile } from './storage.js';
 
@@ -84,49 +66,46 @@ app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// статика и локальные файлы (если без Cloudinary)
+// статика
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// БД
 const db = await createDb();
 
-// простой login под пароль из env (демо)
+// --- auth (очень простая под демо)
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
   if (password && password === process.env.ADMIN_PASSWORD) return res.json({ ok: true });
   return res.status(401).json({ ok: false });
 });
 
-// ---- Tasks (темы) и Sentences (фразы)
+// --- tasks / sentences
 app.get('/api/tasks', async (_req, res) => {
-  const tasks = await db.query('select * from tasks order by id desc');
-  res.json(tasks);
+  const rows = await db.query('select * from tasks order by id desc');
+  res.json(rows);
 });
-
 app.post('/api/tasks', async (req, res) => {
   const { title } = req.body || {};
   if (!title) return res.status(400).json({ error: 'title required' });
   await db.query('insert into tasks(title) values(?)', [title]);
   res.json({ ok: true });
 });
-
-// импорт многострочного .txt (фраз по одной в строке)
 app.post('/api/tasks/:id/sentences', async (req, res) => {
   const { id } = req.params;
   const { text } = req.body || {};
-  const lines = String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const lines = String(text || '').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
   if (!lines.length) return res.status(400).json({ error: 'no lines' });
-  const stmt = 'insert into sentences(task_id, text) values(?, ?)';
+  const stmt = 'insert into sentences(task_id,text) values(?,?)';
   for (const line of lines) await db.query(stmt, [id, line]);
   res.json({ ok: true, count: lines.length });
 });
-
 app.get('/api/tasks/:id/sentences', async (req, res) => {
   const rows = await db.query('select * from sentences where task_id=? order by id', [req.params.id]);
   res.json(rows);
 });
 
-// ---- Upload
+// --- upload
 fs.mkdirSync('tmp', { recursive: true });
 const upload = multer({ dest: 'tmp/' });
 
@@ -134,7 +113,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   try {
     const { taskId, sentenceId, samplerate } = req.body || {};
 
-    // нумерация файлов в рамках taskId: 1.wav, 2.wav, 3.wav...
+    // нумерация 1.wav, 2.wav ... в рамках taskId
     const r = await db.query('select count(*) as c from recordings where task_id=?', [taskId || null]);
     const next = (r[0]?.c || 0) + 1;
     const fileName = `${next}.wav`;
@@ -142,7 +121,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const saved = await saveFile(req.file.path, fileName); // { url, filename }
 
     await db.query(
-      'insert into recordings(task_id, sentence_id, filename, url, samplerate, status, comment) values(?,?,?,?,?,"pending","")',
+      'insert into recordings(task_id,sentence_id,filename,url,samplerate,status,comment) values(?,?,?,?,?,"pending","")',
       [taskId || null, sentenceId || null, saved.filename, saved.url, +samplerate || null]
     );
 
@@ -155,7 +134,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// ---- Admin list / status
+// --- admin list / status
 app.get('/api/recordings', async (req, res) => {
   const { status } = req.query || {};
   let sql = `
@@ -165,15 +144,11 @@ app.get('/api/recordings', async (req, res) => {
     left join tasks t on t.id=r.task_id
   `;
   const params = [];
-  if (status) {
-    sql += ' where r.status=?';
-    params.push(status);
-  }
+  if (status) { sql += ' where r.status=?'; params.push(status); }
   sql += ' order by r.id desc';
   const rows = await db.query(sql, params);
   res.json(rows);
 });
-
 app.patch('/api/recordings/:id', async (req, res) => {
   const { id } = req.params;
   const { status, comment } = req.body || {};
@@ -191,8 +166,7 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => console.log('Server → http://localhost:'+port));
 import Database from 'better-sqlite3';
 
-// Универсальный небольшой слой для SQLite (локально и на Render)
-export function createDbSync() {
+export async function createDb() {
   const db = new Database('recordings.db');
   db.pragma('journal_mode = WAL');
 
@@ -219,92 +193,61 @@ export function createDbSync() {
     created_at text default (datetime('now'))
   )`).run();
 
-  return db;
+  const wrap = {
+    query: (sql, params=[]) => {
+      const isSelect = /^\s*select/i.test(sql);
+      return isSelect ? db.prepare(sql).all(params) : db.prepare(sql).run(params);
+    }
+  };
+  return wrap;
 }
-
-const db = createDbSync();
-
-// Обёртка "всё через один метод"
-export const createDb = async () => ({
-  query: (sql, params=[]) => {
-    const isSelect = /^\s*select/i.test(sql);
-    return isSelect ? db.prepare(sql).all(params) : db.prepare(sql).run(params);
-  }
-});
 import fs from 'fs';
 import path from 'path';
-import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
-dotenv.config();
 
-import { v2 as cloudinary } from 'cloudinary';
+const uploadDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const useCloudinary = !!process.env.CLOUDINARY_URL;
-if (useCloudinary) {
-  // CLOUDINARY_URL берётся автоматически из env (формат cloudinary://...)
-  cloudinary.config({ secure: true });
+export async function saveFile(tmpPath, targetName) {
+  const finalPath = path.join(uploadDir, targetName);
+  fs.renameSync(tmpPath, finalPath);
+  return { url: '/uploads/' + targetName, filename: targetName };
 }
+# Online Recording System (Final)
 
-// локальное хранилище (для dev/без CLOUDINARY_URL)
-const localUploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(localUploadDir)) fs.mkdirSync(localUploadDir, { recursive: true });
-
-export async function saveFile(tempPath, targetName) {
-  if (useCloudinary) {
-    const res = await cloudinary.uploader.upload(tempPath, {
-      folder: 'recordings',
-      public_id: targetName.replace(/\.(wav|webm|mp3)$/i, ''),
-      resource_type: 'video'  // чтобы webm/wav принимал
-    });
-    return { url: res.secure_url, filename: path.basename(res.public_id) + path.extname(res.secure_url) };
-  } else {
-    const finalPath = path.join(localUploadDir, targetName);
-    fs.renameSync(tempPath, finalPath);
-    return { url: '/uploads/' + targetName, filename: targetName };
-  }
-}
-# Online Recording System
-
-## Что это
-- Пользователь: запись в браузере → ресемпл → предпрослушка → аплоад на сервер (WAV, 16/24/32/48 kHz).
-- Админ: импорт фраз из TXT, список записей, фильтры, Approve/Reject, комментарии, скачивание.
-
-## Быстрый старт (локально)
+## Запуск локально
 ```bash
 cp .env.example .env
-# задай ADMIN_PASSWORD в .env
+# впиши ADMIN_PASSWORD
 npm i
 npm run dev
-# user:  http://localhost:3000/
+# user:  http://localhost:3000
 # admin: http://localhost:3000/admin
 
 ---
 
-## Папка `public/`
+# 📂 Папка `public/`
 
-### 9) `public/style.css`
+## 9) `public/style.css`  ← **твои стили**
 ```css
-:root { --bg:#0b0f14; --panel:#121821; --muted:#6b7280; --text:#e5e7eb; --brand:#e4c26a; --ok:#22c55e; --bad:#ef4444; }
-* { box-sizing:border-box; }
-body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--text); }
-.container { max-width:960px; margin:40px auto; padding:24px; background:var(--panel); border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.35); }
-h1 { margin:0 0 8px; font-size:24px; }
-.sub { color:var(--muted); margin-bottom:24px; }
-.row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-select, input, textarea { background:#0f1520; border:1px solid #233047; color:var(--text); border-radius:10px; padding:10px 12px; }
-button { background:var(--brand); color:#0d1016; border:none; padding:10px 14px; border-radius:10px; font-weight:600; cursor:pointer; }
-button.ghost { background:#0f1520; color:var(--text); border:1px solid #233047; }
-button.ok { background:var(--ok); color:#04110a; }
-button.bad { background:var(--bad); color:#120707; }
-.card { background:#0f1520; border:1px solid #233047; padding:16px; border-radius:14px; }
-.list { display:grid; gap:12px; margin-top:12px; }
-audio { width:100%; }
-.tag { display:inline-block; font-size:12px; color:#0e121a; background:var(--brand); border-radius:999px; padding:2px 8px; margin-left:8px; }
-.sep { height:1px; background:#1a2537; margin:16px 0; opacity:.6; }
-.small { font-size:12px; color:var(--muted); }
+:root{--bg:#0b1016;--panel:#121a24;--ink:#e7edf3;--muted:#8a94a6;--gold:#e5c66c;--silver:#c6cbd3;--ok:#22c55e;--bad:#ef4444;--stroke:#223044}
+*{box-sizing:border-box}body{margin:0;font:16px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;background:var(--bg);color:var(--ink)}
+.container{max-width:960px;margin:42px auto;padding:24px;background:linear-gradient(180deg,#121a24 0%,#0f1620 100%);border:1px solid var(--stroke);border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+h1{margin:0 0 6px;font-size:26px;font-weight:700;letter-spacing:.2px}
+.sub{color:var(--muted);margin-bottom:18px}
+.card{background:#0f1620;border:1px solid var(--stroke);border-radius:14px;padding:16px;margin-top:14px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+select,input,textarea{background:#0b121b;border:1px solid var(--stroke);color:var(--ink);border-radius:12px;padding:10px 12px}
+textarea{width:100%;min-height:88px}
+button{border:0;border-radius:12px;padding:10px 14px;cursor:pointer;font-weight:700;letter-spacing:.2px}
+button.primary{background:var(--gold);color:#151515;box-shadow:0 2px 0 #a58932}
+button.ghost{background:#0b121b;color:var(--ink);border:1px solid var(--stroke)}
+button.ok{background:var(--ok);color:#06140b}
+button.bad{background:var(--bad);color:#190707}
+audio{width:100%;margin-top:10px;border-radius:10px}
+.tag{display:inline-block;background:linear-gradient(90deg,var(--gold),var(--silver));-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:800}
+.small{font-size:12px;color:var(--muted)}
+.sep{height:1px;background:var(--stroke);opacity:.6;margin:14px 0}
+.list{display:grid;gap:12px}
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -333,9 +276,9 @@ audio { width:100%; }
     </div>
 
     <div class="row" style="margin-top:12px;">
-      <button id="start">Start</button>
+      <button id="start" class="primary">Start</button>
       <button id="stop" class="ghost">Stop</button>
-      <button id="upload">Upload</button>
+      <button id="upload" class="ghost">Upload</button>
       <div id="status" class="small">Ready.</div>
     </div>
 
@@ -353,21 +296,22 @@ audio { width:100%; }
 </head><body>
 <div class="container">
   <h1>Admin Backoffice <span class="tag">Milestone 2</span></h1>
+
   <div class="card">
     <div class="row">
       <input id="password" type="password" placeholder="Admin password"/>
-      <button id="loginBtn">Login</button>
+      <button id="loginBtn" class="primary">Login</button>
       <span id="authState" class="small"></span>
     </div>
 
     <div class="sep"></div>
     <div class="row">
       <input id="taskTitle" placeholder="New task title"/>
-      <button id="addTask">Add task</button>
+      <button id="addTask" class="ghost">Add task</button>
 
       <select id="taskPick"></select>
-      <textarea id="txt" placeholder="Paste sentences (one per line)" rows="3" style="flex:1"></textarea>
-      <button id="importTxt">Import TXT</button>
+      <textarea id="txt" placeholder="Paste sentences (one per line)"></textarea>
+      <button id="importTxt" class="ghost">Import TXT</button>
     </div>
   </div>
 
@@ -408,7 +352,7 @@ export async function blobToWav(blob, sampleRate) {
   v.setUint32(40, resampled.length*2, true);
 
   let off=44;
-  for(let i=0;i<resampled.length;i++,off+=2){
+  for(let i=0;i<len;i++,off+=2){
     let s=Math.max(-1,Math.min(1,resampled[i]));
     v.setInt16(off, s<0?s*0x8000:s*0x7FFF, true);
   }
@@ -549,7 +493,8 @@ filter.onchange = loadList;
 reloadBtn.onclick = loadList;
 loadTasks(); loadList();
 cp .env.example .env
-# задай ADMIN_PASSWORD
+# впиши ADMIN_PASSWORD
 npm i
 npm run dev
-# http://localhost:3000  и  http://localhost:3000/admin
+# user:  http://localhost:3000
+# admin: http://localhost:3000/admin
