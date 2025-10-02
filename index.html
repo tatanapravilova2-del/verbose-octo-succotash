@@ -1,175 +1,555 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Online Recording System</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <h1>Online Recording System (Demo)</h1>
-
-  <div id="user-section">
-    <h2>User Recording</h2>
-    <label for="task">Task:</label>
-    <input type="text" id="task" placeholder="Enter text task"><br><br>
-
-    <label for="rate">Sample rate:</label>
-    <select id="rate">
-      <option value="16000">16 kHz</option>
-      <option value="24000">24 kHz</option>
-      <option value="32000">32 kHz</option>
-      <option value="48000">48 kHz</option>
-    </select><br><br>
-
-    <button id="start">Start</button>
-    <button id="stop">Stop</button>
-    <button id="upload">Upload</button>
-
-    <p>Status: <span id="status">Idle</span></p>
-    <audio id="player" controls></audio>
-  </div>
-
-  <hr>
-
-  <div id="admin-section">
-    <h2>Admin Backoffice</h2>
-    <button onclick="loadRecordings()">Load All Recordings</button>
-    <ul id="recordings"></ul>
-  </div>
-
-  <script src="script.js"></script>
-</body>
-</html>
-body {
-  font-family: Arial, sans-serif;
-  margin: 20px;
-  background: #f5f5f5;
-}
-
-h1 {
-  text-align: center;
-  color: #333;
-}
-
-#user-section, #admin-section {
-  background: #fff;
-  padding: 20px;
-  margin: 20px auto;
-  border-radius: 10px;
-  width: 80%;
-  box-shadow: 0 0 10px rgba(0,0,0,0.1);
-}
-
-button {
-  margin: 5px;
-  padding: 10px 20px;
-  border: none;
-  border-radius: 6px;
-  background: #4CAF50;
-  color: #fff;
-  cursor: pointer;
-}
-
-button:hover {
-  background: #45a049;
-}
-let mediaRecorder;
-let audioChunks = [];
-
-const startBtn = document.getElementById('start');
-const stopBtn = document.getElementById('stop');
-const uploadBtn = document.getElementById('upload');
-const statusSpan = document.getElementById('status');
-const player = document.getElementById('player');
-
-startBtn.onclick = async () => {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  mediaRecorder = new MediaRecorder(stream);
-  audioChunks = [];
-
-  mediaRecorder.ondataavailable = e => {
-    audioChunks.push(e.data);
-  };
-
-  mediaRecorder.onstop = () => {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-    player.src = URL.createObjectURL(audioBlob);
-  };
-
-  mediaRecorder.start();
-  statusSpan.innerText = "Recording...";
-};
-
-stopBtn.onclick = () => {
-  mediaRecorder.stop();
-  statusSpan.innerText = "Stopped";
-};
-
-uploadBtn.onclick = async () => {
-  const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-  const formData = new FormData();
-  formData.append("file", audioBlob, "recording.wav");
-  formData.append("task", document.getElementById("task").value);
-
-  statusSpan.innerText = "Uploading...";
-
-  const res = await fetch("/upload", { method: "POST", body: formData });
-  if (res.ok) {
-    statusSpan.innerText = "Uploaded successfully!";
-  } else {
-    statusSpan.innerText = "Upload failed.";
-  }
-};
-
-async function loadRecordings() {
-  const res = await fetch("/recordings");
-  const list = await res.json();
-  const ul = document.getElementById("recordings");
-  ul.innerHTML = "";
-  list.forEach(r => {
-    const li = document.createElement("li");
-    li.innerText = r;
-    ul.appendChild(li);
-  });
-}
-const express = require("express");
-const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
-
-const app = express();
-const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
-});
-const upload = multer({ storage });
-
-app.use(express.static("public"));
-
-app.post("/upload", upload.single("file"), (req, res) => {
-  console.log("File uploaded:", req.file.filename);
-  res.json({ message: "ok" });
-});
-
-app.get("/recordings", (req, res) => {
-  const files = fs.readdirSync(uploadDir);
-  res.json(files);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running on port", PORT));
+node_modules/
+uploads/
+.tmp/
+tmp/
+.env
+recordings.db
 {
   "name": "online-recording",
   "version": "1.0.0",
+  "private": true,
+  "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "multer": "^1.4.5"
+    "better-sqlite3": "^9.4.0",
+    "cloudinary": "^1.41.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.11.3"
   }
 }
+PORT=3000
+ADMIN_PASSWORD=admin123
+
+# Если пусто — будет SQLite (recordings.db).
+# Если задашь — будет Postgres:
+DATABASE_URL=
+
+# Хранилище аудио.
+# Если пусто — локальная папка /uploads (годится локально).
+# Для продакшна на Render лучше Cloudinary (бесплатный тариф):
+# Формат: cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+CLOUDINARY_URL=
+services:
+  - type: web
+    name: online-recording
+    env: node
+    plan: free
+    autoDeploy: true
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /admin
+        destination: /admin.html
+import express from 'express';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import cors from 'cors';
+import path from 'path';
+import dotenv from 'dotenv';
+import multer from 'multer';
+import fs from 'fs';
+
+import { fileURLToPath } from 'url';
+import { createDb } from './db.js';
+import { saveFile } from './storage.js';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const app = express();
+
+app.use(helmet());
+app.use(cors());
+app.use(morgan('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// статика и локальные файлы (если без Cloudinary)
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+const db = await createDb();
+
+// простой login под пароль из env (демо)
+app.post('/api/login', (req, res) => {
+  const { password } = req.body || {};
+  if (password && password === process.env.ADMIN_PASSWORD) return res.json({ ok: true });
+  return res.status(401).json({ ok: false });
+});
+
+// ---- Tasks (темы) и Sentences (фразы)
+app.get('/api/tasks', async (_req, res) => {
+  const tasks = await db.query('select * from tasks order by id desc');
+  res.json(tasks);
+});
+
+app.post('/api/tasks', async (req, res) => {
+  const { title } = req.body || {};
+  if (!title) return res.status(400).json({ error: 'title required' });
+  await db.query('insert into tasks(title) values(?)', [title]);
+  res.json({ ok: true });
+});
+
+// импорт многострочного .txt (фраз по одной в строке)
+app.post('/api/tasks/:id/sentences', async (req, res) => {
+  const { id } = req.params;
+  const { text } = req.body || {};
+  const lines = String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return res.status(400).json({ error: 'no lines' });
+  const stmt = 'insert into sentences(task_id, text) values(?, ?)';
+  for (const line of lines) await db.query(stmt, [id, line]);
+  res.json({ ok: true, count: lines.length });
+});
+
+app.get('/api/tasks/:id/sentences', async (req, res) => {
+  const rows = await db.query('select * from sentences where task_id=? order by id', [req.params.id]);
+  res.json(rows);
+});
+
+// ---- Upload
+fs.mkdirSync('tmp', { recursive: true });
+const upload = multer({ dest: 'tmp/' });
+
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  try {
+    const { taskId, sentenceId, samplerate } = req.body || {};
+
+    // нумерация файлов в рамках taskId: 1.wav, 2.wav, 3.wav...
+    const r = await db.query('select count(*) as c from recordings where task_id=?', [taskId || null]);
+    const next = (r[0]?.c || 0) + 1;
+    const fileName = `${next}.wav`;
+
+    const saved = await saveFile(req.file.path, fileName); // { url, filename }
+
+    await db.query(
+      'insert into recordings(task_id, sentence_id, filename, url, samplerate, status, comment) values(?,?,?,?,?,"pending","")',
+      [taskId || null, sentenceId || null, saved.filename, saved.url, +samplerate || null]
+    );
+
+    res.json({ ok: true, file: saved });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'upload failed' });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+  }
+});
+
+// ---- Admin list / status
+app.get('/api/recordings', async (req, res) => {
+  const { status } = req.query || {};
+  let sql = `
+    select r.*, s.text as sentence_text, t.title as task_title
+    from recordings r
+    left join sentences s on s.id=r.sentence_id
+    left join tasks t on t.id=r.task_id
+  `;
+  const params = [];
+  if (status) {
+    sql += ' where r.status=?';
+    params.push(status);
+  }
+  sql += ' order by r.id desc';
+  const rows = await db.query(sql, params);
+  res.json(rows);
+});
+
+app.patch('/api/recordings/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status, comment } = req.body || {};
+  if (!['approved','rejected','pending'].includes(status)) return res.status(400).json({ error: 'bad status' });
+  await db.query('update recordings set status=?, comment=? where id=?', [status, comment || '', id]);
+  res.json({ ok: true });
+});
+
+// SPA route для /admin
+app.get('/admin', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log('Server → http://localhost:'+port));
+import Database from 'better-sqlite3';
+
+// Универсальный небольшой слой для SQLite (локально и на Render)
+export function createDbSync() {
+  const db = new Database('recordings.db');
+  db.pragma('journal_mode = WAL');
+
+  db.prepare(`create table if not exists tasks(
+    id integer primary key autoincrement,
+    title text not null
+  )`).run();
+
+  db.prepare(`create table if not exists sentences(
+    id integer primary key autoincrement,
+    task_id integer references tasks(id) on delete cascade,
+    text text not null
+  )`).run();
+
+  db.prepare(`create table if not exists recordings(
+    id integer primary key autoincrement,
+    task_id integer,
+    sentence_id integer,
+    filename text not null,
+    url text not null,
+    samplerate integer,
+    status text default 'pending',
+    comment text default '',
+    created_at text default (datetime('now'))
+  )`).run();
+
+  return db;
+}
+
+const db = createDbSync();
+
+// Обёртка "всё через один метод"
+export const createDb = async () => ({
+  query: (sql, params=[]) => {
+    const isSelect = /^\s*select/i.test(sql);
+    return isSelect ? db.prepare(sql).all(params) : db.prepare(sql).run(params);
+  }
+});
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+dotenv.config();
+
+import { v2 as cloudinary } from 'cloudinary';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const useCloudinary = !!process.env.CLOUDINARY_URL;
+if (useCloudinary) {
+  // CLOUDINARY_URL берётся автоматически из env (формат cloudinary://...)
+  cloudinary.config({ secure: true });
+}
+
+// локальное хранилище (для dev/без CLOUDINARY_URL)
+const localUploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(localUploadDir)) fs.mkdirSync(localUploadDir, { recursive: true });
+
+export async function saveFile(tempPath, targetName) {
+  if (useCloudinary) {
+    const res = await cloudinary.uploader.upload(tempPath, {
+      folder: 'recordings',
+      public_id: targetName.replace(/\.(wav|webm|mp3)$/i, ''),
+      resource_type: 'video'  // чтобы webm/wav принимал
+    });
+    return { url: res.secure_url, filename: path.basename(res.public_id) + path.extname(res.secure_url) };
+  } else {
+    const finalPath = path.join(localUploadDir, targetName);
+    fs.renameSync(tempPath, finalPath);
+    return { url: '/uploads/' + targetName, filename: targetName };
+  }
+}
+# Online Recording System
+
+## Что это
+- Пользователь: запись в браузере → ресемпл → предпрослушка → аплоад на сервер (WAV, 16/24/32/48 kHz).
+- Админ: импорт фраз из TXT, список записей, фильтры, Approve/Reject, комментарии, скачивание.
+
+## Быстрый старт (локально)
+```bash
+cp .env.example .env
+# задай ADMIN_PASSWORD в .env
+npm i
+npm run dev
+# user:  http://localhost:3000/
+# admin: http://localhost:3000/admin
+
+---
+
+## Папка `public/`
+
+### 9) `public/style.css`
+```css
+:root { --bg:#0b0f14; --panel:#121821; --muted:#6b7280; --text:#e5e7eb; --brand:#e4c26a; --ok:#22c55e; --bad:#ef4444; }
+* { box-sizing:border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--text); }
+.container { max-width:960px; margin:40px auto; padding:24px; background:var(--panel); border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.35); }
+h1 { margin:0 0 8px; font-size:24px; }
+.sub { color:var(--muted); margin-bottom:24px; }
+.row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+select, input, textarea { background:#0f1520; border:1px solid #233047; color:var(--text); border-radius:10px; padding:10px 12px; }
+button { background:var(--brand); color:#0d1016; border:none; padding:10px 14px; border-radius:10px; font-weight:600; cursor:pointer; }
+button.ghost { background:#0f1520; color:var(--text); border:1px solid #233047; }
+button.ok { background:var(--ok); color:#04110a; }
+button.bad { background:var(--bad); color:#120707; }
+.card { background:#0f1520; border:1px solid #233047; padding:16px; border-radius:14px; }
+.list { display:grid; gap:12px; margin-top:12px; }
+audio { width:100%; }
+.tag { display:inline-block; font-size:12px; color:#0e121a; background:var(--brand); border-radius:999px; padding:2px 8px; margin-left:8px; }
+.sep { height:1px; background:#1a2537; margin:16px 0; opacity:.6; }
+.small { font-size:12px; color:var(--muted); }
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Recording — User</title>
+<link rel="stylesheet" href="style.css"/>
+</head><body>
+<div class="container">
+  <h1>Browser Recording <span class="tag">Milestone 1</span></h1>
+  <div class="sub">Record → Preview → Upload. Simple & tidy.</div>
+
+  <div class="card">
+    <div class="row">
+      <label>Task</label>
+      <select id="task"></select>
+
+      <label>Sentence</label>
+      <select id="sentence"></select>
+
+      <label>Sample rate</label>
+      <select id="rate">
+        <option value="16000">16 kHz</option>
+        <option value="24000">24 kHz</option>
+        <option value="32000">32 kHz</option>
+        <option value="48000">48 kHz</option>
+      </select>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button id="start">Start</button>
+      <button id="stop" class="ghost">Stop</button>
+      <button id="upload">Upload</button>
+      <div id="status" class="small">Ready.</div>
+    </div>
+
+    <div class="sep"></div>
+    <audio id="player" controls></audio>
+  </div>
+</div>
+
+<script type="module" src="client.js"></script>
+</body></html>
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Admin — Online Recording</title>
+<link rel="stylesheet" href="style.css"/>
+</head><body>
+<div class="container">
+  <h1>Admin Backoffice <span class="tag">Milestone 2</span></h1>
+  <div class="card">
+    <div class="row">
+      <input id="password" type="password" placeholder="Admin password"/>
+      <button id="loginBtn">Login</button>
+      <span id="authState" class="small"></span>
+    </div>
+
+    <div class="sep"></div>
+    <div class="row">
+      <input id="taskTitle" placeholder="New task title"/>
+      <button id="addTask">Add task</button>
+
+      <select id="taskPick"></select>
+      <textarea id="txt" placeholder="Paste sentences (one per line)" rows="3" style="flex:1"></textarea>
+      <button id="importTxt">Import TXT</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="row">
+      <label>Filter</label>
+      <select id="filter">
+        <option value="">All</option>
+        <option value="pending">Pending</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <button id="reload" class="ghost">Reload</button>
+    </div>
+    <div id="list" class="list"></div>
+  </div>
+</div>
+<script src="admin.js"></script>
+</body></html>
+export async function blobToWav(blob, sampleRate) {
+  const ab = await blob.arrayBuffer();
+  const ctx = new AudioContext();
+  const decoded = await ctx.decodeAudioData(ab);
+  const src = decoded.getChannelData(0);
+  const ratio = decoded.sampleRate / sampleRate;
+  const len = Math.floor(src.length / ratio);
+  const resampled = new Float32Array(len);
+  for (let i=0;i<len;i++) resampled[i] = src[Math.floor(i*ratio)] || 0;
+
+  const buf = new ArrayBuffer(44 + resampled.length*2);
+  const v = new DataView(buf);
+  const ws = (o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+
+  ws(0,'RIFF'); v.setUint32(4, 36 + resampled.length*2, true); ws(8,'WAVE'); ws(12,'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate*2, true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true); ws(36,'data');
+  v.setUint32(40, resampled.length*2, true);
+
+  let off=44;
+  for(let i=0;i<resampled.length;i++,off+=2){
+    let s=Math.max(-1,Math.min(1,resampled[i]));
+    v.setInt16(off, s<0?s*0x8000:s*0x7FFF, true);
+  }
+  return new Blob([v], { type:'audio/wav' });
+}
+import { blobToWav } from './wav-encoder.js';
+
+const taskSel = document.getElementById('task');
+const sentenceSel = document.getElementById('sentence');
+const rateSel = document.getElementById('rate');
+const startBtn = document.getElementById('start');
+const stopBtn = document.getElementById('stop');
+const uploadBtn = document.getElementById('upload');
+const statusEl = document.getElementById('status');
+const player = document.getElementById('player');
+
+let recorder, chunks = [];
+
+async function loadTasks() {
+  const tasks = await fetch('/api/tasks').then(r => r.json());
+  taskSel.innerHTML = tasks.map(t => `<option value="${t.id}">${t.title}</option>`).join('') || '<option value="">No tasks</option>';
+  if (tasks[0]) loadSentences(tasks[0].id);
+}
+async function loadSentences(taskId) {
+  sentenceSel.innerHTML = '';
+  if (!taskId) return;
+  const list = await fetch(`/api/tasks/${taskId}/sentences`).then(r => r.json());
+  sentenceSel.innerHTML = list.map(s => `<option value="${s.id}">${s.text}</option>`).join('') || '<option value="">—</option>';
+}
+taskSel.addEventListener('change', e => loadSentences(e.target.value));
+loadTasks();
+
+startBtn.onclick = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  recorder = new MediaRecorder(stream);
+  chunks = [];
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = async () => {
+    const blob = new Blob(chunks, { type:'audio/webm' });
+    const wav = await blobToWav(blob, +rateSel.value);
+    player.src = URL.createObjectURL(wav);
+    window._lastBlob = wav;
+  };
+  recorder.start();
+  statusEl.textContent = 'Recording…';
+};
+stopBtn.onclick = () => { recorder?.stop(); statusEl.textContent = 'Stopped.'; };
+
+uploadBtn.onclick = async () => {
+  if (!window._lastBlob) return alert('Record first');
+  statusEl.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', window._lastBlob, 'audio.wav');
+  fd.append('samplerate', rateSel.value);
+  fd.append('taskId', taskSel.value || '');
+  fd.append('sentenceId', sentenceSel.value || '');
+
+  const res = await fetch('/api/upload', { method:'POST', body:fd });
+  const json = await res.json();
+  statusEl.textContent = json.ok ? 'Uploaded ✔' : 'Upload failed';
+};
+const password = document.getElementById('password');
+const loginBtn = document.getElementById('loginBtn');
+const authState = document.getElementById('authState');
+const taskTitle = document.getElementById('taskTitle');
+const addTask = document.getElementById('addTask');
+const taskPick = document.getElementById('taskPick');
+const txt = document.getElementById('txt');
+const importTxt = document.getElementById('importTxt');
+const filter = document.getElementById('filter');
+const reloadBtn = document.getElementById('reload');
+const list = document.getElementById('list');
+
+let authed = false;
+
+loginBtn.onclick = async () => {
+  const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ password: password.value })});
+  authed = r.ok;
+  authState.textContent = authed ? 'Authenticated' : 'Wrong password';
+};
+
+async function loadTasks() {
+  const tasks = await fetch('/api/tasks').then(r => r.json());
+  taskPick.innerHTML = tasks.map(t => `<option value="${t.id}">${t.title}</option>`).join('');
+}
+addTask.onclick = async () => {
+  if (!authed) return alert('Login first');
+  await fetch('/api/tasks', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ title: taskTitle.value })});
+  taskTitle.value = '';
+  loadTasks();
+};
+importTxt.onclick = async () => {
+  if (!authed) return alert('Login first');
+  const id = taskPick.value;
+  await fetch(`/api/tasks/${id}/sentences`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ text: txt.value })
+  });
+  txt.value = '';
+  alert('Imported');
+};
+
+async function loadList() {
+  const qs = filter.value ? '?status='+filter.value : '';
+  const rows = await fetch('/api/recordings'+qs).then(r => r.json());
+  list.innerHTML = rows.map(r => `
+    <div class="card">
+      <div class="row">
+        <strong>#${r.id}</strong>
+        <span class="small">${r.task_title || '—'} • ${r.sentence_text || ''}</span>
+        <span class="small">SR: ${r.samplerate || '-'} Hz</span>
+        <span class="tag">${r.status}</span>
+      </div>
+      <audio controls src="${r.url}"></audio>
+      <div class="row">
+        <button class="ok" onclick="setStatus(${r.id},'approved')">Approve</button>
+        <button class="bad" onclick="setStatus(${r.id},'rejected')">Reject</button>
+        <input id="c-${r.id}" placeholder="comment" />
+        <button class="ghost" onclick="comment(${r.id})">Save comment</button>
+      </div>
+    </div>
+  `).join('');
+}
+window.setStatus = async (id, status) => {
+  if (!authed) return alert('Login first');
+  await fetch('/api/recordings/'+id, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status }) });
+  loadList();
+};
+window.comment = async (id) => {
+  if (!authed) return alert('Login first');
+  const comment = document.getElementById('c-'+id).value;
+  await fetch('/api/recordings/'+id, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status:'pending', comment }) });
+  loadList();
+};
+
+filter.onchange = loadList;
+reloadBtn.onclick = loadList;
+loadTasks(); loadList();
+cp .env.example .env
+# задай ADMIN_PASSWORD
+npm i
+npm run dev
+# http://localhost:3000  и  http://localhost:3000/admin
