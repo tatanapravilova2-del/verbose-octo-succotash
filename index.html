@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Online Recording System</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Online Recording System (Demo)</h1>
+
+  <div id="user-section">
+    <h2>User Recording</h2>
+    <label for="task">Task:</label>
+    <input type="text" id="task" placeholder="Enter text task"><br><br>
+
+    <label for="rate">Sample rate:</label>
+    <select id="rate">
+      <option value="16000">16 kHz</option>
+      <option value="24000">24 kHz</option>
+      <option value="32000">32 kHz</option>
+      <option value="48000">48 kHz</option>
+    </select><br><br>
+
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+    <button id="upload">Upload</button>
+
+    <p>Status: <span id="status">Idle</span></p>
+    <audio id="player" controls></audio>
+  </div>
+
+  <hr>
+
+  <div id="admin-section">
+    <h2>Admin Backoffice</h2>
+    <button onclick="loadRecordings()">Load All Recordings</button>
+    <ul id="recordings"></ul>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
+body {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+  background: #f5f5f5;
+}
+
+h1 {
+  text-align: center;
+  color: #333;
+}
+
+#user-section, #admin-section {
+  background: #fff;
+  padding: 20px;
+  margin: 20px auto;
+  border-radius: 10px;
+  width: 80%;
+  box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+button {
+  margin: 5px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #4CAF50;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #45a049;
+}
+let mediaRecorder;
+let audioChunks = [];
+
+const startBtn = document.getElementById('start');
+const stopBtn = document.getElementById('stop');
+const uploadBtn = document.getElementById('upload');
+const statusSpan = document.getElementById('status');
+const player = document.getElementById('player');
+
+startBtn.onclick = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  audioChunks = [];
+
+  mediaRecorder.ondataavailable = e => {
+    audioChunks.push(e.data);
+  };
+
+  mediaRecorder.onstop = () => {
+    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+    player.src = URL.createObjectURL(audioBlob);
+  };
+
+  mediaRecorder.start();
+  statusSpan.innerText = "Recording...";
+};
+
+stopBtn.onclick = () => {
+  mediaRecorder.stop();
+  statusSpan.innerText = "Stopped";
+};
+
+uploadBtn.onclick = async () => {
+  const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.wav");
+  formData.append("task", document.getElementById("task").value);
+
+  statusSpan.innerText = "Uploading...";
+
+  const res = await fetch("/upload", { method: "POST", body: formData });
+  if (res.ok) {
+    statusSpan.innerText = "Uploaded successfully!";
+  } else {
+    statusSpan.innerText = "Upload failed.";
+  }
+};
+
+async function loadRecordings() {
+  const res = await fetch("/recordings");
+  const list = await res.json();
+  const ul = document.getElementById("recordings");
+  ul.innerHTML = "";
+  list.forEach(r => {
+    const li = document.createElement("li");
+    li.innerText = r;
+    ul.appendChild(li);
+  });
+}
+const express = require("express");
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
+
+const app = express();
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
+});
+const upload = multer({ storage });
+
+app.use(express.static("public"));
+
+app.post("/upload", upload.single("file"), (req, res) => {
+  console.log("File uploaded:", req.file.filename);
+  res.json({ message: "ok" });
+});
+
+app.get("/recordings", (req, res) => {
+  const files = fs.readdirSync(uploadDir);
+  res.json(files);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Server running on port", PORT));
+{
+  "name": "online-recording",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5"
+  }
+}
